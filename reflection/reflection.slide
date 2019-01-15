@@ -1,0 +1,289 @@
+Reflection
+15 Jan 2019
+
+Michał Matczuk
+Software Engineer, ScyllaDB
+
+michal@scylladb.com
+https://github.com/mmatczuk/talks/reflection
+
+https://www.scylladb.com/
+We are hiring.
+
+* Reflection
+
+Reflection in computing is the ability of a program to examine its own structure, particularly through types; it's a form of metaprogramming. It's also a great source of confusion.
+
+— Rob Pike, The Laws of Reflection
+
+* Reflection
+
+.image mirror.jpg _ 500
+
+* Reflection is never clear...
+
+.video rob.mp4 video/mp4 _ 800
+
+* Key enabler
+
+- SQL / CQL Object Row Mapping
+- Data marshalling / unmarshalling
+- Plugins
+- and much more
+
+* interface{}
+
+* Type-safety
+
+.play f.go /^func main/,/^}/
+
+* Type-safety
+
+.play g.go /^func main/,/^}/
+
+* Interface
+
+.code iface.go /^type iface/,/^}/
+
+.code iface.go /^type itab/,/^}/
+
+* Interface
+
+    var w io.Writer = os.Stdout
+
+.image iface2.png 130 _
+
+* Interface - side effects
+
+.code g.go /^func main/,/^}/
+
+    go tool compile -m -l g.go
+    g.go:7:6: "Hello Gophers" escapes to heap
+    g.go:8:4: 42 escapes to heap
+
+* Interface - side effects
+
+github.com/scylladb/go-set vs. github.com/fatih/set
+
+    benchmark                      old ns/op     new ns/op     delta
+    BenchmarkHasNonExisting-4      43.9          5.61          -87.22%
+    BenchmarkHasExisting-4         62.9          6.89          -89.05%
+    BenchmarkHasExistingMany-4     66.0          12.6          -80.91%
+    BenchmarkAdd-4                 406           223           -45.07%
+
+    benchmark                      old allocs     new allocs     delta
+    BenchmarkHasNonExisting-4      2              0              -100.00%
+    BenchmarkHasExisting-4         2              0              -100.00%
+    BenchmarkHasExistingMany-4     2              0              -100.00%
+    BenchmarkAdd-4                 2              0              -100.00%
+
+    benchmark                      old bytes     new bytes     delta
+    BenchmarkHasNonExisting-4      24            0             -100.00%
+    BenchmarkHasExisting-4         24            0             -100.00%
+    BenchmarkHasExistingMany-4     24            0             -100.00%
+    BenchmarkAdd-4                 82            40            -51.22%
+
+* Interface - side effects
+
+- Allocation slowness
+- GC pressure (possibly)
+- Dynamic dispatch - ~10% call overhead
+- Cannot inline function calls - ~4x call overhead
+
+* Reflection
+
+* Reflection
+
+: Without knowing variable type at compile time.
+
+- Inspect variable type structure (fields, methods, tags, func args...)
+- Read / set value
+- Allocate memory
+- Call methods
+- Send / receive on channels
+
+: In particular reflection is crucial to the implementation of two important APIs
+: string formatting provided by fmt, and protocol encoding provided by packages like encoding/json
+
+* Reflection
+
+    var w io.Writer = os.Stdout
+    fmt.Printf("%#v", w) // "&os.File{file:(*os.file)(0xc00005a0c0)}"
+
+* Reflection in practice (stdlib)
+
+.code fmt.go /^func \(p \*pp\) printArg/,/^}/
+
+* Reflection in practice (stdlib)
+
+.code fmt.go /^func \(p \*pp\) printValue/,/^}/
+
+* The first law of reflection
+
+Reflection goes from interface value to reflection object.
+
+Getting type reflection.
+
+    func TypeOf(i interface{}) Type // interface over rtype
+
+Getting value reflection.
+
+    func ValueOf(i interface{}) Value // struct (rtype and data ptr)
+
+* The first law of reflection
+
+Example
+
+    var w io.Writer = os.Stdout
+    fmt.Println(reflect.TypeOf(w))  // "*os.File"
+    fmt.Println(reflect.ValueOf(w)) // "&{0xc0000520c0}"
+
+.image iface2.png 130 _
+
+* Fun examples
+
+* Fun examples
+
+Interface satisfiability
+
+.play exifce.go /^func main/,/^}/
+
+* Fun examples
+
+Sizeof
+
+.play exsizeof.go /^func main/,/^}/
+
+* Fun examples
+
+Inspecting function
+
+.play exfunc.go /^func main/,/^}/
+
+* reflect.Type interface
+
+    Kind() Kind
+    // Elem returns a type's element type.
+    // It panics if the type's Kind is not Array, Chan, Map, Ptr, or Slice.
+    Elem() Type
+
+    Size() uintptr
+    Len() int
+
+    NumField() int
+    Field(i int) StructField
+    FieldByIndex(index []int) StructField
+    FieldByName(name string) (StructField, bool)
+    FieldByNameFunc(match func(string) bool) (StructField, bool)
+
+    NumMethod() int
+    Method(int) Method
+    MethodByName(string) (Method, bool)
+
+    // Inspecting functions and channels...
+
+* The second law of reflection
+
+Reflection goes from reflection object to interface value.
+
+.play value.go /^func main/,/^}/
+
+* The second law of reflection
+
+Reflection goes from reflection object to interface value.
+
+.play canaddr.go /^func main/,/^}/
+
+* Elem() and Addr()
+
+.play elemaddr.go /^func main/,/^}/
+
+* reflect.Value struct
+
+    func (v Value) Kind()
+    // Elem returns the value that the interface v contains
+    // or that the pointer v points to.
+    // It panics if v's Kind is not Interface or Ptr.
+    // It returns the zero Value if v is nil.
+    func (v Value) Elem() Value
+
+    func (v Value) CanAddr() bool
+    func (v Value) CanSet() bool
+    // Addr returns a pointer value representing the address of v.
+    // It panics if CanAddr() returns false.
+    // Addr is typically used to obtain a pointer to a struct field
+    // or slice element in order to call a method that requires a
+    // pointer receiver.
+    func (v Value) Addr() Value
+    func (v Value) Interface() (i interface{})
+
+    // Getters
+    // Setters Set SetInt SetFloat SetMapIndex...
+
+    // Field and Method functions - same as in Type
+    // Call, Send, Recv...
+
+* Type.Elem() vs. Value.Elem()
+
+What is output of this program?
+
+.play elem.go /^func main/,/^}/
+
+* The third law of reflection
+
+To modify a reflection object, the value must be settable.
+
+.play canset.go /^func main/,/^}/
+
+* ReflectX
+
+* ReflectX
+
+Part of github.com/scylladb/gocqlx and github.com/jmoiron/sqlx
+
+Bind query arguments from a struct
+
+    func (q *Query) Bind(v ...interface{}) *Query
+
+Scan result to struct ptr or a slice
+
+    func (iter *Iter) Scan(dest ...interface{}) bool
+
+* Requirements
+
+- be able to map a name to a field
+- understand embedded structs
+- understand mapping names to fields by a particular tag
+- user specified name -> field mapping functions
+
+* Example
+
+- Mapping HTTP URL params to request model
+- Support int, bool, string and their slices
+
+.code x/model.go /START OMIT/,/END OMIT/
+
+* Example
+
+.code x/mapper.go /START OMIT/,/END OMIT/
+
+HTTP endpoint
+
+.code x/endpoint.go /START OMIT/,/END OMIT/
+
+* Example
+
+.code x/unpack.go /START OMIT/,/END OMIT/
+
+* Example
+
+Result
+
+    w := httptest.NewRecorder()
+    r := httptest.NewRequest("GET", "/search?sid=id&l=foo&l=bar&max=100&x=true", nil)
+    search(w, r)
+    {RequestContext:{SessionID:id} Labels:[foo bar] MaxResults:100 Exact:true}
+
+Cost
+
+    BenchmarkUnpack-4        1000000              1295 ns/op             640 B/op         10 allocs/op
