@@ -1,7 +1,7 @@
 package x
 
 // START OMIT
-import "github.com/scylladb/gocqlx/reflectx"
+import "github.com/scylladb/go-reflectx"
 
 var DefaultMapper = reflectx.NewMapper("http")
 

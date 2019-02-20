@@ -1,7 +1,7 @@
 package x
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -9,18 +9,17 @@ var debug bool = true
 
 // START OMIT
 func search(w http.ResponseWriter, r *http.Request) {
+	// URL /search?sid=id&l=foo&l=bar&max=100&x=true
 	if err := r.ParseForm(); err != nil {
-		// handle error
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var data SearchRequest
-	if err := unpack(r, &data); err != nil { // HL
-		// handle error
+	if err := bindParams(r, &data); err != nil { // HL
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if debug {
-		fmt.Printf("%+v", data) // HL
-	}
+	log.Printf("%+v", data) // "RequestContext:{SessionID:id} Labels:[foo bar] MaxResults:100 Exact:true}"
 }
 
 // END OMIT

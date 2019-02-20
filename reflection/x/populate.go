@@ -7,8 +7,16 @@ import (
 )
 
 // START OMIT
-func populate(v reflect.Value, value string) error {
+func setValue(v reflect.Value, value string) error {
 	switch v.Kind() {
+	// Special handling of slices.
+	case reflect.Slice:
+		elem := reflect.New(v.Type().Elem()).Elem()
+		if err := setValue(elem, value); err != nil {
+			return err
+		}
+		v.Set(reflect.Append(v, elem))
+	// Handling of selected types...
 	case reflect.String:
 		v.SetString(value)
 	case reflect.Int:

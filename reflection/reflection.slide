@@ -1,35 +1,57 @@
 Reflection
-15 Jan 2019
+21 Feb 2019
 
 Michał Matczuk
 Software Engineer, ScyllaDB
 
-michal@scylladb.com
-https://github.com/mmatczuk/talks/reflection
-
-https://www.scylladb.com/
-We are hiring.
+jobs@scylladb.com
 
 * Reflection
 
-Reflection in computing is the ability of a program to examine its own structure, particularly through types; it's a form of metaprogramming. It's also a great source of confusion.
+"Reflection in computing is the ability of a program to examine its own structure, particularly through types; it's a form of metaprogramming. It's also a great source of confusion."
 
 — Rob Pike, The Laws of Reflection
 
 * Reflection
 
-.image mirror.jpg _ 500
+.image mirror.jpg _ 800
 
 * Reflection is never clear...
 
 .video rob.mp4 video/mp4 _ 800
 
+* Reflection is never clear...
+
+- Difficult to use
+- Only runtime checks - aka panics
+- Step away from using interface{} and reflection
+
 * Key enabler
 
-- SQL / CQL Object Row Mapping
-- Data marshalling / unmarshalling
-- Plugins
-- and much more
+- Data (de)serialization (fmt, json, xml)
+- Libraries - modifying alien objects
+- Hacking - inspecting code in runtime
+
+* For me...
+
+github.com/scylladb/gocqlx
+
+	cql := `INSERT INTO slice_map_table (testuuid, testtimestamp, testvarchar, 
+	testbigint, testblob, testbool, testfloat, testdouble, testint, testdecimal, 
+	testlist, testset, testmap, testvarint, testinet)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	q := session.Query(cql)
+
+Want
+
+	q.BindStruct(&m)
+
+Have
+
+	q.Bind(m.Testuuid, m.Testtimestamp, m.Testvarchar, m.Testbigint,
+	m.Testblob, m.Testbool, m.Testfloat, m.Testdouble, m.Testint,
+	m.Testdecimal, m.Testlist, m.Testset, m.Testmap, m.Testvarint,
+	m.Testinet)
 
 * interface{}
 
@@ -49,7 +71,8 @@ Reflection in computing is the ability of a program to examine its own structure
 
 * Interface
 
-    var w io.Writer = os.Stdout
+    // func WriteString(w Writer, s string) (n int, err error)
+    n, err := io.WriteString(os.Stdout, "I love Wrocław")
 
 .image iface2.png 130 _
 
@@ -110,17 +133,17 @@ github.com/scylladb/go-set vs. github.com/fatih/set
     var w io.Writer = os.Stdout
     fmt.Printf("%#v", w) // "&os.File{file:(*os.file)(0xc00005a0c0)}"
 
-* Reflection in practice (stdlib)
+* Reflection in practice (package fmt)
 
 .code fmt.go /^func \(p \*pp\) printArg/,/^}/
 
-* Reflection in practice (stdlib)
+* Reflection in practice (package fmt)
 
 .code fmt.go /^func \(p \*pp\) printValue/,/^}/
 
 * The first law of reflection
 
-Reflection goes from interface value to reflection object.
+"Reflection goes from interface value to reflection object."
 
 Getting type reflection.
 
@@ -140,21 +163,19 @@ Example
 
 .image iface2.png 130 _
 
-* Fun examples
-
-* Fun examples
+* Examples
 
 Interface satisfiability
 
 .play exifce.go /^func main/,/^}/
 
-* Fun examples
+* Examples
 
 Sizeof
 
 .play exsizeof.go /^func main/,/^}/
 
-* Fun examples
+* Examples
 
 Inspecting function
 
@@ -184,19 +205,23 @@ Inspecting function
 
 * The second law of reflection
 
-Reflection goes from reflection object to interface value.
+"Reflection goes from reflection object to interface value."
 
 .play value.go /^func main/,/^}/
-
-* The second law of reflection
-
-Reflection goes from reflection object to interface value.
-
-.play canaddr.go /^func main/,/^}/
 
 * Elem() and Addr()
 
 .play elemaddr.go /^func main/,/^}/
+
+* What is addressable?
+
+.play canaddr.go /^func main/,/^}/
+
+* Type.Elem() vs. Value.Elem()
+
+What is output of this program?
+
+.play elem.go /^func main/,/^}/
 
 * reflect.Value struct
 
@@ -223,59 +248,73 @@ Reflection goes from reflection object to interface value.
     // Field and Method functions - same as in Type
     // Call, Send, Recv...
 
-* Type.Elem() vs. Value.Elem()
-
-What is output of this program?
-
-.play elem.go /^func main/,/^}/
-
 * The third law of reflection
 
-To modify a reflection object, the value must be settable.
+"To modify a reflection object, the value must be settable."
 
 .play canset.go /^func main/,/^}/
 
-* ReflectX
+* Field tags and reflectx package
 
-* ReflectX
+* Typical DB Driver API
 
-Part of github.com/scylladb/gocqlx and github.com/jmoiron/sqlx
-
-Bind query arguments from a struct
+Bind lots of ?,?,?,?...
 
     func (q *Query) Bind(v ...interface{}) *Query
 
-Scan result to struct ptr or a slice
+Scan columns in order...
 
     func (iter *Iter) Scan(dest ...interface{}) bool
 
-* Requirements
+* Desired API
 
-- be able to map a name to a field
-- understand embedded structs
-- understand mapping names to fields by a particular tag
-- user specified name -> field mapping functions
+Bind from struct from struct fields
 
-* Example
+    func (q *Queryx) BindStruct(v interface{}) *Query
 
-- Mapping HTTP URL params to request model
-- Support int, bool, string and their slices
+Scan columns to a struct
+
+    func (iter *Iterx) StructScan(dest interface{}) bool
+
+or even better
+
+    func (iter *Iterx) Get(dest interface{}) error {
+    func (iter *Iterx) Select(dest interface{}) error
+
+* package reflectx
+
+Requirements
+
+- Map a name to a field
+- Understand embedded structs
+- Understand mapping names to fields by a particular tag
+- User specified name
+- Field mapping functions
+- Caching
+
+* package reflectx
+
+- Originates from github.com/jmoiron/sqlx
+- Used by github.com/scylladb/gocqlx
+- Now available as a standalone pkg github.com/scylladb/go-reflectx
+
+Yes we tried ... github.com/jmoiron/sqlx/issues/415
+
+* Mapping HTTP URL params to request model
 
 .code x/model.go /START OMIT/,/END OMIT/
 
-* Example
-
-.code x/mapper.go /START OMIT/,/END OMIT/
-
-HTTP endpoint
+* Mapping HTTP URL params to request model
 
 .code x/endpoint.go /START OMIT/,/END OMIT/
 
-* Example
+* Mapping HTTP URL params to request model
+
+.code x/mapper.go /START OMIT/,/END OMIT/
 
 .code x/unpack.go /START OMIT/,/END OMIT/
 
-* Example
+* Mapping HTTP URL params to request model
 
 Result
 
@@ -287,3 +326,9 @@ Result
 Cost
 
     BenchmarkUnpack-4        1000000              1295 ns/op             640 B/op         10 allocs/op
+
+* Recap
+
+"Compared to a disk seek or network transfer, the cost of reflection will be negligible."
+
+- Dave Cheney
