@@ -1,0 +1,299 @@
+Adventures with SSH
+Golang Warsaw Meetup
+27 Aug 2019
+
+Michał Matczuk
+Software Engineer, ScyllaDB
+
+michal@scylladb.com
+github.com/mmatczuk
+
+* Who am I?
+
+Team leader of Scylla Manager a cluster management tool.
+
+Contributor to Open-Source projects
+
+- Cassandra Go driver
+- Rclone
+- jmoiron/sqlx
+- pressly/goose
+
+and more...
+
+* Where should I event start...
+
+- Command execution
+- Port forwarding
+- X11 forwarding
+- Agent-forwarding
+- PTY
+- and more...
+
+* Why not just ssh example.com
+
+* Why not just ssh example.com
+
+DISCLAIMER: This sections is taken from Chris Roche from Lyft
+and was presented at GoSF on the 25 Aug 2016.
+
+* Because golang.org/x/crypto/ssh gives you:
+
+- Cross platform code
+- Testability
+- Better error handling
+- More capabilities
+- Ergonomics:
+
+*Either:*
+
+    $ ssh -o ProxyCommand='ssh proxy.example.com nc example.com 22'
+
+*Or:*
+
+    $ sshThru proxy.example.com example.com
+
+* Opening A Connection
+
+.code gosf_ssh/conn.go /func Connect/,/END Connect/
+
+- Can also specify timeouts, host checks, & more SSH goodies
+- Each *AuthMethod* is attempted in order
+- Handful of types:
+
+ ssh.Password            // static secret
+ ssh.PasswordCallback    // ask the user
+ ssh.KeyboardInteractive // server-provided prompts
+ ssh.RetryableAuthMethod // decorator for above
+ ssh.PublicKeys          // key pairs
+ ssh.PublicKeysCallback  // SSH-Agent
+
+* Authentication Methods
+
+.code gosf_ssh/auth.go /func KeyPair/,/END KeyPair/
+.code gosf_ssh/auth.go /func SSHAgent/,/END SSHAgent/
+
+* My note on Authentication Methods
+
+Using SSH agent is HIGHLY recommended
+
+	$ ssh localhost id
+	Enter passphrase for key '/home/aris/.ssh/id_rsa':
+	uid=1000(aris) gid=100(users) groups=100(users)
+	$ eval $(ssh-agent)
+	Agent pid 12165
+	$ ssh-add -l
+	The agent has no identities.
+	$ ssh-add .ssh/id_rsa
+	Enter passphrase for .ssh/id_rsa:
+	Identity added: .ssh/id_rsa (.ssh/id_rsa)
+	$ ssh-add -l
+	2048 11:ad:87:e3:fc:68:86:df:12:ca:89:00:22:8b:94:48 .ssh/id_rsa (RSA)
+	$ ssh localhost id
+	uid=1000(aris) gid=100(users) groups=100(users
+
+* Auth + Connect
+
+.code gosf_ssh/conn.go /func Run/,/END Run/
+
+- Don't forget *client.Close()*!
+- Need *crypto/x509* if keys are password-protected / PKCS8
+
+* Run Command
+
+.code gosf_ssh/cmd.go /func RunCmd/,
+
+- One command or shell, one *ssh.Session*
+- Similar API to *os/exec.Cmd*
+- Don't forget *sess.Close()*!
+
+* Open Shell
+
+.code gosf_ssh/shell.go /func RunShell/,
+
+* Proxy Through Bastion
+
+.image gosf_ssh/bastion.png 300 _
+.code gosf_ssh/proxy.go /func Proxy/,
+
+* Multiplex Commands
+
+.code gosf_ssh/multiplex.go /TailLog/,/END LIST/
+
+* Multiplex Commands
+
+.code gosf_ssh/multiplex.go /MultiTail/,
+
+* Tunnel
+
+.code gosf_ssh/tunnel.go /Tunnel/,/END TUNNEL/
+
+* Reverse Tunnel / Proxy
+
+.code gosf_ssh/tunnel.go /ReverseTunnel/,
+
+* A better API
+
+* A better API
+
+- One command or shell, one *ssh.Session*
+- Wrappers
+- Clones of *Docker* github.com/docker/machine/libmachine/ssh
+
+.code ifces.go /^type Client/,/^}/
+
+* A better API (alternative)
+
+Based on *Terraform* github.com/hashicorp/terraform/communicator
+
+.code ifces.go /^type Cmd/,/^}/
+
+* A better API (alternative)
+
+Based on *Terraform* github.com/hashicorp/terraform/communicator
+
+.code ifces.go /^type Communicator/,/^}/
+
+* Limitations of golang.org/x/crypto/ssh
+
+- No keepalive (solved*)
+- No scp (solved*)
+- No context
+- No debug logs (only log.Fatal)
+
+* Keepalive
+
+Config options *ServerAliveInterval* and *ServerAliveCountMax*
+
+ServerAliveInterval
+Sets a timeout interval in seconds after which if *no* data has been received from the server, ssh(1) will send a message through the encrypted channel to request a response from the server.  The default is 0, indicating that these messages will not be sent to the server.
+
+Issues are closed:
+- golang/go#19338
+- golang/go#21478
+
+* We forked and patched Terraform code
+
+- Context aware (dial and execution)
+- Keepalive enabled
+- Can copy files using SCP
+
+Go get it now at:
+
+.link https://github.com/scylladb/go-sshtools github.com/scylladb/go-sshtools
+
+* Our Story
+
+* Our Story
+
+- REST API, HTTP on localhost:10000
+- SSH pre release 1.0
+- HTTP *transport* over SSH
+
+	dialer := ssh.NewProxyDialer(config, ssh.ContextDialer(&net.Dialer{
+		Timeout:   3 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}))
+
+	transport := &http.Transport{
+		DialContext: dialer.DialContext,
+		// Other config options
+	}
+
+	client := &http.Client{
+		Timeout:   Timeout,
+		Transport: transport,
+	}
+
+- sshtools used by Scylla Cloud
+
+* Lessons learned
+
+* The nologin shell
+
+	This account is currently not available.
+
+- Tunneling, jumping is still *possible*
+- Executing commands is not
+- different distros different paths
+
+* Wrong DNS config and timeout races
+
+Config option
+
+	`UseDNS yes`
+
+- DNS misconfiguration
+- Crowded Wi-Fi (SSH to a laptop)
+- Default timeout 10s
+
+To fix:
+
+- Fix the DNS config or your network...
+- Disabling reverse DNS lookups
+- Start sshd with -u0 option
+
+* Per authorised key options
+
+~/.ssh/authorised_keys
+
+	# Comments allowed at start of line
+	ssh-rsa AAAAB3Nza...LiPk== user@example.net
+	from="*.sales.example.net,!pc.sales.example.net" ssh-rsa
+	AAAAB2...19Q== john@example.net
+	command="dump /home",no-pty,no-port-forwarding ssh-rsa
+	AAAAC3...51R== example.net
+	permitopen="192.0.2.1:80",permitopen="192.0.2.2:25" ssh-rsa
+	AAAAB5...21S==
+	permitlisten="localhost:8080",permitopen="localhost:22000" ssh-rsa
+	AAAAB5...21S==
+	tunnel="0",command="sh /etc/netstart tun0" ssh-rsa AAAA...==
+	jane@example.net
+	restrict,command="uptime" ssh-rsa AAAA1C8...32Tv==
+	user@example.net
+	restrict,pty,command="nethack" ssh-rsa AAAA1f8...IrrC5==
+	user@example.net
+
+.link https://www.freebsd.org/cgi/man.cgi?sshd(8)#AUTHORIZED_KEYS%09FILE_FORMAT Docs on AUTHORIZED_KEYS FILE_FORMAT
+
+* Default configurations
+
+- Per distro defaults
+- Org policies
+- Smart cards, 2FA, credentials leases
+
+* Debugging
+
+- Good logs server (LogLevel DEBUG3)
+- Good logs ssh -vvv
+- No logs ssh go package
+
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug1: attempt 0 failures 0 [preauth]
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_getpwnamallow entering [preauth]
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_request_send entering: type 8 [preauth]
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_getpwnamallow: waiting for MONITOR_ANS_PWNAM [preauth]
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_request_receive_expect entering: type 9 [preauth]
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_request_receive entering [preauth]
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_request_receive entering
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: monitor_read: checking request 8
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: mm_answer_pwnamallow
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug3: Trying to reverse map address 10.122.51.174.
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: debug2: parse_server_config: config reprocess config len 1245
+	Aug 26 14:00:45 ip-10-122-93-217.ec2.internal sshd[104887]: User scylla-manager from ip-10-122-51-174.ec2.internal not allowed because not listed in *AllowUsers*
+
+* Conclusion
+
+The good
+- No sidecar
+- Stable
+
+The bad
+- Key distribution is difficult...
+- Non standard SSH configurations
+- Rarely done by ops people
+
+* Recap
+
+- SSH is very powerful
+- We can build awesome tools with SSH
+- If you like *hacking* SSH come join me we are hiring
