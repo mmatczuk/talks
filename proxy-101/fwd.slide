@@ -370,4 +370,13 @@ Go Wins 🎉
 
 .image ./img/benchmark5.png _ 300
 
+Shard per core.
+
+.image ./img/iouring.png _ 300
+
 * Questions?
+
+Forwarder Proxy
+
+- forwarder-proxy.io
+- github.com/saucelabs/forwarder
