@@ -1,0 +1,373 @@
+HTTP Proxying 101
+and lessons learned from building a proxy in Go
+
+Michał Matczuk
+Staff Software Engineer, Sauce Labs
+
+michal.matczuk@saucelabs.com
+
+* What is a proxy?
+
+.image ./img/proxy.png _ 800
+
+* What is a proxy?
+
+.image ./img/image1.png _ 900
+
+* Proxies are everywhere - Infrastructure
+
+- TLS termination
+- Load balancing
+- Caching
+
+.image ./img/envoy.svg _ 200
+.image ./img/ngnix.svg _ 200
+
+* Proxies are everywhere - Security
+
+- Protect your infrastructure (DDoS, WAF)
+- Protect your privacy (VPN)
+- Enrich with credentials (Vault)
+- Spy on users
+
+* Proxies are everywhere - Devtools
+
+- Debug / Reverse engineer APIs
+- Modify traffic
+- Record and replay HTTP traffic
+- Simulate network conditions
+
+.image ./img/mitmproxy.png _ 300
+.image ./img/polyjs.png _ 200
+.image ./img/toxiproxy.png _ 300
+
+* Proxies are everywhere - proxy industry
+
+- Bypass censorship / geo restrictions
+- Scraping and bots
+
+How:
+
+- Residential proxies
+- Datacenter proxies
+- Rotating proxies
+
+.image ./img/sneaker.png _ 700
+
+* Forward vs Reverse proxy
+
+* Forward vs Reverse proxy
+
+.image ./img/bytebytego.png _ 500
+
+* Proxy protocols
+
+Boring:
+
+- HTTP(S)
+- SOCKS
+
+TCP/UDP over TLS:
+
+- Shadowsocks
+- Trojan
+- ...
+
+* Proxy protocols - HTTP proxy protocol
+
+.image ./img/connect.png _ 450
+
+* Proxy protocols - SOCKS5
+
+.image ./img/socks.png _ 600
+
+https://datatracker.ietf.org/doc/html/rfc1928
+
+* Proxy protocols - Shadowsocks
+
+.image ./img/shadowsocks.png _ 800
+
+* Proxy protocols - Trojan
+
+.image ./img/trojan.png _ 800
+
+* Transparent proxy
+
+.image ./img/transparent.png _ 800
+
+* HTTP proxying
+
+* Why HTTP is hard?
+
+.image ./img/excess.png _ 800
+
+curl -x localhost:3128 -v --head http://www.google.com
+
+Connected to :: (::1) port 54174
+> HEAD http://www.google.com/ HTTP/1.1
+> Host: www.google.com
+> User-Agent: curl/8.4.0
+> Accept: */*
+> Proxy-Connection: Keep-Alive
+>
+< HTTP/1.1 200 OK
+< Transfer-Encoding: chunked
+<
+* Excess found: excess = 2 url = / (zero-length body)
+
+* What Proxies Must Do
+
+.image ./img/mnot.png _ 400
+
+https://www.mnot.net/blog/2011/07/11/what_proxies_must_do
+
+* Remove Hop-by-hop Headers
+
+.code ./src/hopbyhop.go
+
+* Connection header - don't set it
+
+.image ./img/connection.png _ 800
+
+Setting Connection: close header in HTTP/2 will make whole TCP connection unusable.
+
+* Transfer-Encoding header - don't set it (manually)
+
+.image ./img/transferencoding.png _ 800
+
+* Transfer-Encoding: chunked
+
+- Introduced in HTTP 1.1 - 1997 (year after HTTP 1.0)
+- Content-Length is omitted - really?
+
+Example:
+
+6\r\n
+Sauce \r\n
+4\r\n
+Labs\r\n
+0\r\n
+
+* Go flush after headers to avoid buffering
+
+.code ./src/flush.go
+
+* Detect Bad Framing
+
+Security Alert: Request Smuggling Via Malicious Content Lengths
+
+.image ./img/smuggling.png _ 800
+
+Must watch https://www.youtube.com/watch?v=gAnDUoq1NzQ
+
+* Detect Bad Framing
+
+.image ./img/denydomains.png _ 800
+
+https://forwarder-proxy.io/cli/forwarder_run/#deny-domains
+
+* Buffer Intelligently
+
+- Don't buffer whole request / response
+- Use io.Reader io.Writer based APIs
+
+* Buffered connection
+
+- io.Copy on a buffered connection may cause a deadlock
+- Flush interval - not the best solution
+
+Data corruption alert!
+
+- http.ReadRequest(b *bufio.Reader) (*Request, error)
+- Hijack() (net.Conn, *bufio.ReadWriter, error)
+
+* Buffers may contain data
+
+Byte reader
+
+.code ./src/bytereader.go
+
+* Buffers may contain data
+
+Draining
+
+.code ./src/drain.go
+
+Multireader
+
+.code ./src/multireader.go
+
+* Flush intelligently
+
+.code ./src/flush1.go
+
+* Flush intelligently
+
+.code ./src/flush2.go
+
+* Pass TCP FIN
+
+- Don't close TCP connection on EOF
+- close writing side of the upstream connection
+- Use net.TCPConn.CloseWrite()
+- May not be easy with wrapped connections
+
+* Pass TCP FIN
+
+.code ./src/closewriter.go
+
+* Handle protocol upgrades
+
+- Don't remove Remove Hop-by-hop Headers
+- WS client sends CONNECT
+
+GET /ws HTTP/1.1
+Host: www.example.com
+Connection: upgrade
+Upgrade: websocket
+
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+
+.code ./src/upgrade.go
+
+* WebSockets can work over HTTP/2
+
+Added in Chrome 91 (May 2021)
+
+.image ./img/wshttp2.png _ 600
+
+https://datatracker.ietf.org/doc/html/rfc8441
+
+* Performance - HOL
+
+* HTTP proxy is HTTP/1.1 server
+
+- Head of line blocking
+- HTTP pipelining
+- HTTP/2?
+
+* Head of line blocking
+
+HTTP/1.1
+
+One form of HOL blocking in HTTP/1.1 is when the number of allowed parallel requests in the browser is used up, and subsequent requests need to wait for the former ones to complete.
+
+HTTP/2
+
+HTTP/2 addresses this issue through request multiplexing, which eliminates HOL blocking at the application layer, but HOL still exists at the transport (TCP) layer
+
+* HTTP pipelining
+
+.image ./img/pipelining.png _ 600
+
+* HTTP/2 for proxies
+
+- Supported by curl
+- Supported by browsers
+- Not supported by Go https://github.com/golang/go/issues/26479
+
+Maybe not what you expect...
+
+.image ./img/h2proxy.png _ 800
+
+https://httpwg.org/specs/rfc9113.html#connectDos
+
+* HTTP/3 for proxies
+
+Envoy
+
+.image ./img/h3envoy.png _ 600
+.image ./img/h3envoybpf.png _ 600
+
+* HTTP/3 for proxies
+
+.image ./img/h3mitmproxy.png _ 600
+.image ./img/h3mitmproxy2.png _ 600
+
+* Performance - allocations
+
+* Use io.CopyBuffer instead of io.Copy
+
+- io.Copy uses 32KB buffer allocated on each call
+
+.image ./img/copy.png _ 600
+
+* Use io.CopyBuffer instead of io.Copy
+
+.image ./img/copybuffer.png _ 600
+
+* Use io.CopyBuffer instead of io.Copy
+
+io: allocate copy buffers from a pool
+
+.image ./img/copypool.png _ 600
+
+https://github.com/golang/go/commit/7d7fd6d3627f7dbba250ecfecea2f5ffe6c5aaa7
+
+* Allocations today
+
+.image ./img/allocs.png _ 1000
+
+* Allocations today
+
+net/textproto: reduce allocations in ReadMIMEHeader #37809
+
+.image ./img/textproto.png _ 700
+
+* Memory usage
+
+.image ./img/grafana.png _ 1000
+
+* GOMEMLIMIT defers GC
+
+.image ./img/gomemlimit.png _ 600
+
+* Does it really work - the good
+
+.image ./img/fastcom.png _ 600
+
+* Does it really work - the bad
+
+Techempower benchmark
+
+.image ./img/techempower.png _ 600
+
+https://github.com/Xudong-Huang/may_minihttp
+
+.image ./img/may.png _ 600
+
+* Does it really work - the bad
+
+.code ./src/helloworld.rs
+
+* Does it really work - the bad
+
+.image ./img/benchmark1.png _ 500
+
+.image ./img/benchmark2.png _ 500
+
+* Is Go inferior to Rust?
+
+Naive Go Hello World implementation
+
+.image ./img/benchmark1.png _ 500
+
+.image ./img/benchmark3.png _ 500
+
+* Is Go inferior to Rust?
+
+Gnet Hello World implementation https://github.com/gnet-io/gnet-examples/blob/v2/http/http.go
+
+.image ./img/benchmark1.png _ 500
+
+.image ./img/benchmark4.png _ 500
+
+Go Wins 🎉
+
+* What it all means and what's next?
+
+.image ./img/benchmark5.png _ 300
+
+* Questions?
