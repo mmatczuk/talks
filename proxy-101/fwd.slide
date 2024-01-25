@@ -10,10 +10,6 @@ michal.matczuk@saucelabs.com
 
 .image ./img/proxy.png _ 800
 
-* What is a proxy?
-
-.image ./img/image1.png _ 900
-
 * Proxies are everywhere - Infrastructure
 
 - TLS termination
@@ -77,6 +73,15 @@ TCP/UDP over TLS:
 
 .image ./img/connect.png _ 450
 
+* Proxy protocols - HTTP proxy protocol
+
+> CONNECT www.google.com:443 HTTP/1.1
+> Host: www.google.com:443
+> User-Agent: curl/7.64.1
+> Proxy-Connection: Keep-Alive
+>
+< HTTP/1.1 200 Connection established
+
 * Proxy protocols - SOCKS5
 
 .image ./img/socks.png _ 600
@@ -87,13 +92,11 @@ https://datatracker.ietf.org/doc/html/rfc1928
 
 .image ./img/shadowsocks.png _ 800
 
-* Proxy protocols - Trojan
-
-.image ./img/trojan.png _ 800
-
 * Transparent proxy
 
-.image ./img/transparent.png _ 800
+.image ./img/transparent-proxy.png _ 500
+
+.image ./img/transparent.png _ 700
 
 * HTTP proxying
 
@@ -115,25 +118,9 @@ Connected to :: (::1) port 54174
 <
 * Excess found: excess = 2 url = / (zero-length body)
 
-* What Proxies Must Do
+* HTTP/2
 
-.image ./img/mnot.png _ 400
-
-https://www.mnot.net/blog/2011/07/11/what_proxies_must_do
-
-* Remove Hop-by-hop Headers
-
-.code ./src/hopbyhop.go
-
-* Connection header - don't set it
-
-.image ./img/connection.png _ 800
-
-Setting Connection: close header in HTTP/2 will make whole TCP connection unusable.
-
-* Transfer-Encoding header - don't set it (manually)
-
-.image ./img/transferencoding.png _ 800
+.image ./img/h2.svg _ 600
 
 * Transfer-Encoding: chunked
 
@@ -148,97 +135,91 @@ Sauce \r\n
 Labs\r\n
 0\r\n
 
-* Go flush after headers to avoid buffering
+.image ./img/transferencoding.png _ 600
+
+* Transfer-Encoding: don't set it yourself
+
+Go flush after headers to avoid buffering
 
 .code ./src/flush.go
 
-* Detect Bad Framing
+* Remove Hop-by-hop Headers
 
-Security Alert: Request Smuggling Via Malicious Content Lengths
+.code ./src/hopbyhop.go
 
-.image ./img/smuggling.png _ 800
+Setting Connection: close header in HTTP/2 will make whole TCP connection unusable.
+
+* Security Alert: Bad Framing
+
+- Content-Length and Transfer-Encoding 💣 💣 💣
+- Request Smuggling Via Malicious Content Lengths
+
+.image ./img/smuggling.png _ 700
 
 Must watch https://www.youtube.com/watch?v=gAnDUoq1NzQ
-
-* Detect Bad Framing
-
-.image ./img/denydomains.png _ 800
-
-https://forwarder-proxy.io/cli/forwarder_run/#deny-domains
 
 * Buffer Intelligently
 
 - Don't buffer whole request / response
-- Use io.Reader io.Writer based APIs
+- Use io.Reader / io.Writer based APIs
 
-* Buffered connection
+* Buffered connection - dead lock
 
 - io.Copy on a buffered connection may cause a deadlock
 - Flush interval - not the best solution
 
-Data corruption alert!
+.image ./img/flush.png _ 600
 
-- http.ReadRequest(b *bufio.Reader) (*Request, error)
-- Hijack() (net.Conn, *bufio.ReadWriter, error)
-
-* Buffers may contain data
-
-Byte reader
-
-.code ./src/bytereader.go
-
-* Buffers may contain data
-
-Draining
-
-.code ./src/drain.go
-
-Multireader
-
-.code ./src/multireader.go
-
-* Flush intelligently
-
-.code ./src/flush1.go
+net/http/httputil.ReverseProxy
 
 * Flush intelligently
 
 .code ./src/flush2.go
 
+* Buffered connection - data loss
+
+API:
+
+- http.ReadRequest(b *bufio.Reader) (*Request, error)
+- http.ReadResponse(b *bufio.Reader, req *Request) (*Response, error)
+- Hijack() (net.Conn, *bufio.ReadWriter, error)
+
+Always handle buffered data
+
+- Byte reader - read CONNECT request
+- Buffer draining
+- io.MultiReader
+
 * Pass TCP FIN
 
-- Don't close TCP connection on EOF
-- close writing side of the upstream connection
-- Use net.TCPConn.CloseWrite()
+API:
+
+- TCPConn.Close()
+- TCPConn.CloseRead()
+- TCPConn.CloseWrite()
+
+On EOF:
+
+- Don't close TCP connection
+- Close writing side of the upstream connection
 - May not be easy with wrapped connections
-
-* Pass TCP FIN
-
-.code ./src/closewriter.go
+- We use reflection to find underlying TCPConn
 
 * Handle protocol upgrades
 
 - Don't remove Remove Hop-by-hop Headers
 - WS client sends CONNECT
 
-GET /ws HTTP/1.1
-Host: www.example.com
-Connection: upgrade
-Upgrade: websocket
-
-HTTP/1.1 101 Switching Protocols
-Upgrade: websocket
-Connection: Upgrade
+> GET /ws HTTP/1.1
+> Host: www.example.com
+> Connection: upgrade
+> Upgrade: websocket
+>
+< HTTP/1.1 101 Switching Protocols
+< Upgrade: websocket
+< Connection: Upgrade
 
 .code ./src/upgrade.go
-
-* WebSockets can work over HTTP/2
-
-Added in Chrome 91 (May 2021)
-
-.image ./img/wshttp2.png _ 600
-
-https://datatracker.ietf.org/doc/html/rfc8441
 
 * Performance - HOL
 

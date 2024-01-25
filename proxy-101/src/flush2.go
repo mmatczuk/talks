@@ -1,5 +1,7 @@
-// flushAfterChunkWriter works with net/http/internal.chunkedWriter and forces a flush after each chunk is written.
-// There is also net/http/internal.FlushAfterChunkWriter that does the same thing nicer, but it is not available.
+// flushAfterChunkWriter works with net/http/internal.chunkedWriter
+// and forces a flush after each chunk is written.
+// There is also net/http/internal.FlushAfterChunkWriter
+// that does the same thing nicer, but it is not available.
 type flushAfterChunkWriter struct {
 	*bufio.Writer
 }
