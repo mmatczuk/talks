@@ -2,246 +2,142 @@ HTTP Proxying 101
 and lessons learned from building a proxy in Go
 
 Michał Matczuk
-Staff Software Engineer, Sauce Labs
+Sauce Labs
 
 michal.matczuk@saucelabs.com
 
-* What is a proxy?
+* Proxy
 
-.image ./img/proxy.png _ 800
+.image ./img/proxy2.png _ 600
 
-* Proxies are everywhere - Infrastructure
+* Some well-known proxies
 
-- TLS termination
-- Load balancing
-- Caching
+# - TLS termination
+# - Load balancing
+# - Caching
+# - Rate limiting
 
 .image ./img/envoy.svg _ 200
 .image ./img/ngnix.svg _ 200
 
-* Proxies are everywhere - Security
+* Proxies for developers?
 
-- Protect your infrastructure (DDoS, WAF)
-- Protect your privacy (VPN)
-- Enrich with credentials (Vault)
-- Spy on users
-
-* Proxies are everywhere - Devtools
-
-- Debug / Reverse engineer APIs
-- Modify traffic
-- Record and replay HTTP traffic
-- Simulate network conditions
+# - Debug / Reverse engineer APIs
+# - Modify traffic
+# - Record and replay HTTP traffic
+# - Simulate network conditions
 
 .image ./img/mitmproxy.png _ 300
 .image ./img/polyjs.png _ 200
 .image ./img/toxiproxy.png _ 300
 
-* Proxies are everywhere - proxy industry
+* What am I building?
 
-- Bypass censorship / geo restrictions
-- Scraping and bots
+Forwarder Proxy
 
-How:
+- forwarder-proxy.io
+- github.com/saucelabs/forwarder
 
-- Residential proxies
-- Datacenter proxies
-- Rotating proxies
+Sauce Connect - reverse tunnels over HTTP/2
 
-.image ./img/sneaker.png _ 700
+* Why build a proxy in Go?
+
+- Reasonably fast
+- Good tooling for networking
+- No so much great libraries for proxies unfortunately
+- Very easy to distribute (cross platform)
 
 * Forward vs Reverse proxy
 
-* Forward vs Reverse proxy
+* Reverse proxy
 
-.image ./img/bytebytego.png _ 500
+.image ./img/reverse_proxy_flow.png _ 1000
 
-* Proxy protocols
+* Forward proxy
 
-Boring:
-
-- HTTP(S)
-- SOCKS
-
-TCP/UDP over TLS:
-
-- Shadowsocks
-- Trojan
-- ...
-
-* Proxy protocols - HTTP proxy protocol
-
-.image ./img/connect.png _ 450
-
-* Proxy protocols - HTTP proxy protocol
-
-> CONNECT www.google.com:443 HTTP/1.1
-> Host: www.google.com:443
-> User-Agent: curl/7.64.1
-> Proxy-Connection: Keep-Alive
->
-< HTTP/1.1 200 Connection established
-
-* Proxy protocols - SOCKS5
-
-.image ./img/socks.png _ 600
-
-https://datatracker.ietf.org/doc/html/rfc1928
-
-* Proxy protocols - Shadowsocks
-
-.image ./img/shadowsocks.png _ 800
+.image ./img/forward_proxy_flow.png _ 1000
 
 * Transparent proxy
 
-.image ./img/transparent-proxy.png _ 500
+iptables
 
 .image ./img/transparent.png _ 700
 
-* HTTP proxying
+IP_TRANSPARENT socket option:
 
-* Why HTTP is hard?
+- Binding to addresses that are not (usually) considered local
+- Receiving connections and packets from iptables TPROXY redirected sessions
 
-.image ./img/excess.png _ 800
+* Proxy protocols
 
-curl -x localhost:3128 -v --head http://www.google.com
+* HTTP proxy protocol 🐛
 
-Connected to :: (::1) port 54174
-> HEAD http://www.google.com/ HTTP/1.1
-> Host: www.google.com
-> User-Agent: curl/8.4.0
-> Accept: */*
-> Proxy-Connection: Keep-Alive
->
-< HTTP/1.1 200 OK
-< Transfer-Encoding: chunked
-<
-* Excess found: excess = 2 url = / (zero-length body)
+HTTPS
 
-* HTTP/2
+.code ./src/connect.http
 
-.image ./img/h2.svg _ 600
+- Works everywhere
+- TCP only
+- Proxy-Authorization header
+- Optional encryption (HTTPS)
+- No multiplexing (solved* by HTTP/2)️
 
-* Transfer-Encoding: chunked
+* SOCKS5
 
-- Introduced in HTTP 1.1 - 1997 (year after HTTP 1.0)
-- Content-Length is omitted - really?
+.code ./src/socks5_req.txt
 
-Example:
+https://datatracker.ietf.org/doc/html/rfc1928
 
-6\r\n
-Sauce \r\n
-4\r\n
-Labs\r\n
-0\r\n
+# o  VER    protocol version: X'05'
+# o  CMD
+#    o  CONNECT X'01'
+#    o  BIND X'02'
+#    o  UDP ASSOCIATE X'03'
+# o  RSV    RESERVED
+# o  ATYP   address type of following address
+#    o  IP V4 address: X'01'
+#    o  DOMAINNAME: X'03'
+#    o  IP V6 address: X'04'
+# o  DST.ADDR       desired destination address
+# o  DST.PORT desired destination port in network octet
+#    order
+# o  VER    protocol version: X'05'
+# o  REP    Reply field:
+#    o  X'00' succeeded
+#    o  X'01' general SOCKS server failure
+#    o  X'02' connection not allowed by ruleset
+#    o  X'03' Network unreachable
+#    o  X'04' Host unreachable
+#    o  X'05' Connection refused
+#    o  X'06' TTL expired
+#    o  X'07' Command not supported
+#    o  X'08' Address type not supported
+#    o  X'09' to X'FF' unassigned
+# o  RSV    RESERVED
+# o  ATYP   address type of following address
 
-.image ./img/transferencoding.png _ 600
+- TPC/UDP
+- Authentication
+- IPv6
+- No encryption
+- No multiplexing
 
-* Transfer-Encoding: don't set it yourself
+* SOCKS4
 
-Go flush after headers to avoid buffering
+- no authentication
+- no IPv6
+- no UDP
 
-.code ./src/flush.go
+🇨🇳 Lesser known socks inspired protocols like Shadowsocks...
 
-* Remove Hop-by-hop Headers
+* HTTP CONNECT over HTTP/2, HTTP/3
 
-.code ./src/hopbyhop.go
+.image ./img/h2.svg _ 400
 
-Setting Connection: close header in HTTP/2 will make whole TCP connection unusable.
-
-* Security Alert: Bad Framing
-
-- Content-Length and Transfer-Encoding 💣 💣 💣
-- Request Smuggling Via Malicious Content Lengths
-
-.image ./img/smuggling.png _ 700
-
-Must watch https://www.youtube.com/watch?v=gAnDUoq1NzQ
-
-* Buffer Intelligently
-
-- Don't buffer whole request / response
-- Use io.Reader / io.Writer based APIs
-
-* Buffered connection - dead lock
-
-- io.Copy on a buffered connection may cause a deadlock
-- Flush interval - not the best solution
-
-.image ./img/flush.png _ 600
-
-net/http/httputil.ReverseProxy
-
-* Flush intelligently
-
-.code ./src/flush2.go
-
-* Buffered connection - data loss
-
-API:
-
-- http.ReadRequest(b *bufio.Reader) (*Request, error)
-- http.ReadResponse(b *bufio.Reader, req *Request) (*Response, error)
-- Hijack() (net.Conn, *bufio.ReadWriter, error)
-
-Always handle buffered data
-
-- Byte reader - read CONNECT request
-- Buffer draining
-- io.MultiReader
-
-* Pass TCP FIN
-
-API:
-
-- TCPConn.Close()
-- TCPConn.CloseRead()
-- TCPConn.CloseWrite()
-
-On EOF:
-
-- Don't close TCP connection
-- Close writing side of the upstream connection
-- May not be easy with wrapped connections
-- We use reflection to find underlying TCPConn
-
-* Handle protocol upgrades
-
-- Don't remove Remove Hop-by-hop Headers
-- WS client sends CONNECT
-
-> GET /ws HTTP/1.1
-> Host: www.example.com
-> Connection: upgrade
-> Upgrade: websocket
->
-< HTTP/1.1 101 Switching Protocols
-< Upgrade: websocket
-< Connection: Upgrade
-
-.code ./src/upgrade.go
-
-* Performance - HOL
-
-* HTTP proxy is HTTP/1.1 server
-
-- Head of line blocking
-- HTTP pipelining
-- HTTP/2?
-
-* Head of line blocking
-
-HTTP/1.1
-
-One form of HOL blocking in HTTP/1.1 is when the number of allowed parallel requests in the browser is used up, and subsequent requests need to wait for the former ones to complete.
-
-HTTP/2
-
-HTTP/2 addresses this issue through request multiplexing, which eliminates HOL blocking at the application layer, but HOL still exists at the transport (TCP) layer
-
-* HTTP pipelining
-
-.image ./img/pipelining.png _ 600
+- Works everywhere
+- Multiplexing
+- Eliminates HOL blocking at the application layer (HTTP/2)
+- Eliminates HOL blocking at the transport layer (HTTP/3)
 
 * HTTP/2 for proxies
 
@@ -249,7 +145,7 @@ HTTP/2 addresses this issue through request multiplexing, which eliminates HOL b
 - Supported by browsers
 - Not supported by Go https://github.com/golang/go/issues/26479
 
-Maybe not what you expect...
+Accepting connection cheap, dialing expensive 🤔
 
 .image ./img/h2proxy.png _ 800
 
@@ -267,7 +163,158 @@ Envoy
 .image ./img/h3mitmproxy.png _ 600
 .image ./img/h3mitmproxy2.png _ 600
 
-* Performance - allocations
+* HTTP proxying
+
+* HTTP proxying
+
+- HTTP is open to 🐛 interpretation
+- HTTP is overly complex
+- HTTP/1/2/3 interop issues
+
+* HTTP proxying
+
+Sometimes the easy way is the hard way.
+― George W. Parker
+
+# Excess found: excess = 2 url = / (zero-length body)
+# curl -x localhost:3128 -v --head http://www.google.com
+#Connected to :: (::1) port 54174
+#> HEAD http://www.google.com/ HTTP/1.1
+#> Host: www.google.com
+#> User-Agent: curl/8.4.0
+#> Accept: */*
+#> Proxy-Connection: Keep-Alive
+#>
+#< HTTP/1.1 200 OK
+#< Transfer-Encoding: chunked
+#<
+
+* Transfer-Encoding: chunked
+
+- Introduced in HTTP 1.1 - 1997 (year after HTTP 1.0)
+- Content-Length is omitted - really?
+
+Example:
+
+6\r\n
+Sauce \r\n
+4\r\n
+Labs\r\n
+0\r\n
+
+.image ./img/transferencoding.png _ 600
+
+* Transfer-Encoding: chunked
+
+Envoy
+
+.image ./img/envoy_allow_chunked_length.png _ 800
+
+* Request Smuggling Via Malicious Content Lengths
+
+Content-Length and Transfer-Encoding 💣 💣 💣
+
+.image ./img/smuggling.png _ 700
+
+https://www.youtube.com/watch?v=gAnDUoq1NzQ
+
+* Remove Hop-by-hop Headers
+
+.code ./src/hopbyhop.go
+
+HTTP/2
+
+Connection: close header makes whole TCP connection unusable
+
+* Don't remove Hop-by-hop Headers
+
+for protocol upgrades
+
+# WS client sends CONNECT
+
+.code ./src/upgrade.http
+
+* Go tip
+
+If response status code is 101 (Switching Protocols) then
+
+body is writable
+
+.code ./src/upgrade.go
+
+* Go tip
+
+You can flush response after headers to prevent buffering
+
+.code ./src/flush.go
+
+* Buffering
+
+* Buffer based APIs
+
+ http.ReadRequest(b *bufio.Reader) (*Request, error)
+ http.ReadResponse(b *bufio.Reader, req *Request) (*Response, error)
+ Hijack() (net.Conn, *bufio.ReadWriter, error)
+
+Prevent data loss - always handle buffered data
+
+- Byte reader - for reading CONNECT requests
+- Buffer draining - write buffer first
+- io.MultiReader
+
+* Buffer Intelligently
+
+Don't buffer whole request / response
+
+- Latency, Latency, Latency
+- OOM
+- SSE
+
+Use io.Reader / io.Writer based APIs 😻
+
+* How to flush?
+
+- APIs require buffered connections - good
+- io.Copy on a buffered connection may cause a deadlock - bad
+
+* How to flush?
+
+Flush interval
+
+net/http/httputil.ReverseProxy
+
+.image ./img/flush.png _ 600
+
+* How to flush?
+
+Flush on write may be suboptimal
+
+Content aware flushing is better
+
+.code ./src/flush2.go
+
+* Pass TCP FIN
+
+API:
+
+- TCPConn.Close()
+- TCPConn.CloseRead()
+- TCPConn.CloseWrite()
+
+On EOF:
+
+- Don't close TCP connection
+- Close writing side of the upstream connection
+- May not be easy with wrapped connections
+- We use reflection to find underlying TCPConn
+
+* Performance
+
+* Go tip
+
+Setting GOMEMLIMIT defers GC
+
+.image ./img/gomemlimit.png _ 600
 
 * Use io.CopyBuffer instead of io.Copy
 
@@ -287,77 +334,7 @@ io: allocate copy buffers from a pool
 
 https://github.com/golang/go/commit/7d7fd6d3627f7dbba250ecfecea2f5ffe6c5aaa7
 
-* Allocations today
-
-.image ./img/allocs.png _ 1000
-
-* Allocations today
-
-net/textproto: reduce allocations in ReadMIMEHeader #37809
-
-.image ./img/textproto.png _ 700
-
-* Memory usage
-
-.image ./img/grafana.png _ 1000
-
-* GOMEMLIMIT defers GC
-
-.image ./img/gomemlimit.png _ 600
-
-* Does it really work - the good
-
-.image ./img/fastcom.png _ 600
-
-* Does it really work - the bad
-
-Techempower benchmark
-
-.image ./img/techempower.png _ 600
-
-https://github.com/Xudong-Huang/may_minihttp
-
-.image ./img/may.png _ 600
-
-* Does it really work - the bad
-
-.code ./src/helloworld.rs
-
-* Does it really work - the bad
-
-.image ./img/benchmark1.png _ 500
-
-.image ./img/benchmark2.png _ 500
-
-* Is Go inferior to Rust?
-
-Naive Go Hello World implementation
-
-.image ./img/benchmark1.png _ 500
-
-.image ./img/benchmark3.png _ 500
-
-* Is Go inferior to Rust?
-
-Gnet Hello World implementation https://github.com/gnet-io/gnet-examples/blob/v2/http/http.go
-
-.image ./img/benchmark1.png _ 500
-
-.image ./img/benchmark4.png _ 500
-
-Go Wins 🎉
-
-* What it all means and what's next?
-
-.image ./img/benchmark5.png _ 300
-
-Shard per core.
-
-.image ./img/iouring.png _ 300
+Reverted
 
 * Questions?
 
-Forwarder Proxy
-
-- forwarder-proxy.io
-- github.com/saucelabs/forwarder
