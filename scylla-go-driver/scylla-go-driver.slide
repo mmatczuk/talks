@@ -1,0 +1,162 @@
+ScyllaDB Go Driver (2022)
+How we built a driver that outperforms GoCQL and Rust
+Tags: go, scylla, database, performance
+
+
+Michał Matczuk
+
+* Introduction
+- New ScyllaDB Go Driver project
+- Collaboration with University of Warsaw
+- Goal: Exceed performance of both GoCQL and ScyllaDB Rust Driver
+- Focus on "shared-nothing" architecture for maximum performance
+- Featured on Hacker News front page twice
+
+* Performance Highlights
+
+Benchmark:
+Insert 100 million rows concurrently, evenly distributed across cores.
+
+- ~4x faster than GoCQL
+- 2x faster than ScyllaDB Rust Driver
+- 2x lower average latency under high concurrency
+
+* Architecture Overview
+
+.link https://excalidraw.com/#json=O1LKzvDtmztos_S06uTxz,BOZVuwkBNAPZTCebNPKqTQ
+
+* CQL Binary Protocol
+
+Header
+
+.code ../scylla-go-driver/frame/header.go /type Header/,/^}/
+
+Areas for Improvement
+
+- Similar to HTTP/2
+- Client responsibility for page size vs DATA frame
+- Dynamic window size and maximum frame size
+
+* Innovations
+
+* New Framer Design
+
+Request/Response Pattern
+
+.code ../scylla-go-driver/frame/frame.go /type Request/,/^}/
+
+frame.Buffer
+
+.code ../scylla-go-driver/frame/buffer.go /type Buffer/,/^}/
+
+* New Framer Design
+
+.code ../scylla-go-driver/frame/response/error.go /func ParseReadTimeoutError/,/^}/
+
+* Shard-Aware Connections
+
+.code ../scylla-go-driver/transport/conn.go /func OpenShardConn/,/^}/
+
+* Smart Stream ID Generation
+
+.code ../scylla-go-driver/transport/stream.go /type streamIDAllocator/,/^}/
+
+.code ../scylla-go-driver/transport/stream.go /func .* Alloc/,/^}/
+
+.link https://github.com/scylladb/gocql/blob/803992761650195bd5ca3869855c1943ad7d1152/internal/streams/streams.go#L90
+
+* Stream ID Allocation on Client Thread (new)
+
+.code ../scylla-go-driver/transport/conn.go /func .* sendRequest/,/r := request/
+
+* Request Channel Controller (new)
+
+    requestChanSize      = maxStreamID / 2
+    targetWaiting        = requestChanSize
+
+.code ../scylla-go-driver/transport/conn.go /func .* sendController/,/^}/
+
+* Frame Coalescing Optimization (kind of new)
+
+- Key improvement: Brief waiting period to batch multiple frames
+- Before: 36% of execution time spent in syscall.Write
+- After: Only 7.5% of execution time spent in syscall.Write
+- 2x performance improvement from this optimization alone
+
+* Frame Coalescing Implementation (kind of new)
+
+.code ../scylla-go-driver/transport/conn.go /func \(.*connWriter\) loop/,/^}/
+
+* Query Routing: B-tree Improvement
+
+- Standard data structure for token ring storage
+- Addressed N+1 problem for slices
+- Utilized Google's B-tree implementation
+- Enhanced with Go generics
+- Featured on Hacker News front page
+
+.link https://www.scylladb.com/2022/04/27/shaving-40-off-googles-b-tree-implementation-with-go-generics/
+
+* Query Routing Optimization (new)
+
+- Pre-computing query plans instead of generating on-demand
+- Eliminating allocations during connection selection
+- Reduced connection selection time from 17% to 7.5% of total execution time
+- Token-aware routing for partition-key optimization
+
+* Query Routing Implementation
+
+- Replaced B-tree with binary search over slice
+- Implemented trie of nodes to store replica sets
+- Store list of replicas for each token
+
+.code ../scylla-go-driver/transport/trie.go /type trie struct/,/^}/
+
+.code ../scylla-go-driver/transport/trie.go /func .* Next/,/^}/
+
+* Query Routing Policy Interface
+
+.code ../scylla-go-driver/transport/policy.go /type HostSelectionPolicy interface/,/^}/
+
+    var local, remote []*Node
+    pi := qi.topology.policyInfo
+    if qi.tokenAware {
+    	pos := pi.ring.tokenLowerBound(qi.token)
+    	local = pi.ring[pos].localReplicas
+    	remote = pi.ring[pos].remoteReplicas
+    } else {
+    	// Fallback to DC aware round robin on all nodes.
+    	local = pi.localNodes
+    	remote = pi.remoteNodes
+    }
+    if offset < len(local) {
+    	idx := (qi.offset + uint64(offset)) % uint64(len(local))
+    	return local[idx]
+    } else if offset < len(local)+len(remote) {
+    	idx := (qi.offset + uint64(offset) - uint64(len(local))) % uint64(len(remote))
+    	return remote[idx]
+    }
+
+* Benchmarks
+
+* Memory Allocation Comparison
+
+- New driver: 0.68 allocations per insert
+- GoCQL: 3.44 allocations per insert
+- Rust driver: 0.91 allocations per insert
+
+* Throughput Performance
+
+.image rps.webp
+
+* Latency Comparison
+
+.image p99.webp
+
+* Conclusion
+
+- Performance-focused design delivers significant results
+- Systematic profiling and benchmarking drove optimization
+- Available on GitHub: github.com/scylladb/scylla-go-driver
+
+* Q&A
